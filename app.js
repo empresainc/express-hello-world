@@ -4,17 +4,16 @@ const crypto = require('crypto');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Configurações exatas extraídas do seu JADX
+// Credenciais exatas extraídas do seu JADX
 const AES_KEY = "QwEr12TyUi!@Op34AsDf#$GhJk56L%^Z";
 const AES_IV  = "xCvB78Nm&*9(0)Mn";
 
-// Função robusta de descriptografia
 function decrypt(cipherText) {
   try {
     const key = Buffer.from(AES_KEY, 'utf8');
     const iv = Buffer.from(AES_IV, 'utf8');
 
-    // Limpeza de caracteres inválidos do Base64
+    // Limpeza rigorosa: remove qualquer caractere que não pertença ao Base64
     const cleaned = cipherText.replace(/[^A-Za-z0-9+/=]/g, '');
 
     const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
@@ -38,8 +37,9 @@ app.get('/', async (req, res) => {
     const response = await axios.post('https://filmbr.i2s1n.com/api/search/screen', 
     params.toString(), 
     {
+      responseType: 'text', // Força o Axios a não tentar interpretar os dados como JSON
       headers: {
-        'Accept-Encoding': 'gzip',
+        'Accept-Encoding': 'identity', // Desativa compressão gzip para os dados virem limpos
         'androidid': '5d570494343d7035',
         'app_id': 'filmbr',
         'app_language': 'pt',
@@ -64,44 +64,27 @@ app.get('/', async (req, res) => {
       }
     });
 
-    const rawData = response.data.trim();
-    let decryptedData = null;
-    let success = false;
-
-    // ESTRATÉGIA MÁGICA:
-    // O código vai procurar onde a string de Base64 realmente começa.
-    // Ele tenta decifrar a partir da primeira barra, da segunda barra, ou do início.
-    const scanIndices = [0];
+    const rawData = response.data.toString().trim();
     
-    // Procura todas as barras na resposta para tentar começar a partir delas
-    for (let i = 0; i < rawData.length; i++) {
-      if (rawData[i] === '/') {
-        scanIndices.push(i + 1);
-      }
+    // Remove o cabeçalho 'SHOK...' caso ele venha na resposta
+    let base64Limpo = rawData;
+    if (rawData.includes('/')) {
+      base64Limpo = rawData.substring(rawData.indexOf('/') + 1);
     }
 
-    // Tenta decifrar cada possibilidade de corte
-    for (const index of scanIndices) {
-      try {
-        const testChunk = rawData.substring(index);
-        decryptedData = decrypt(testChunk);
-        success = true;
-        break; // Se funcionar sem erro, encontramos o ponto exato!
-      } catch (e) {
-        // Se der erro de tamanho de bloco, ignora e tenta o próximo corte
-        continue;
-      }
-    }
-
-    if (!success) {
-      return res.status(500).send("Não foi possível encontrar o bloco AES correto.");
-    }
-
-    // Retorna o JSON limpo
+    // Tenta decifrar
     try {
-      res.json(JSON.parse(decryptedData));
-    } catch {
-      res.send(decryptedData);
+      const dadosFinais = decrypt(base64Limpo);
+      
+      // Retorna o JSON limpo
+      try {
+        res.json(JSON.parse(dadosFinais));
+      } catch {
+        res.send(dadosFinais);
+      }
+    } catch (decryptError) {
+      // Se ainda assim falhar, o código mostra a resposta exata recebida para depuração
+      res.status(500).send("Erro na descriptografia: " + decryptError.message + "\n\nDados recebidos:\n" + rawData);
     }
 
   } catch (error) {
