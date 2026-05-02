@@ -4,26 +4,27 @@ const crypto = require('crypto');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Configurações exatas que extraíste do JADX
+// Configurações exatas extraídas do seu JADX
 const AES_KEY = "QwEr12TyUi!@Op34AsDf#$GhJk56L%^Z";
 const AES_IV  = "xCvB78Nm&*9(0)Mn";
 
+// Função robusta de descriptografia
 function decrypt(cipherText) {
   try {
     const key = Buffer.from(AES_KEY, 'utf8');
     const iv = Buffer.from(AES_IV, 'utf8');
 
-    // 1. Remove qualquer quebra de linha ou espaço em branco
-    const cleanedCipherText = cipherText.replace(/\s/g, '');
+    // Limpeza de caracteres inválidos do Base64
+    const cleaned = cipherText.replace(/[^A-Za-z0-9+/=]/g, '');
 
     const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
     decipher.setAutoPadding(true);
 
-    let decrypted = decipher.update(cleanedCipherText, 'base64', 'utf8');
+    let decrypted = decipher.update(cleaned, 'base64', 'utf8');
     decrypted += decipher.final('utf8');
     return decrypted;
   } catch (error) {
-    return "Erro ao descriptografar: " + error.message;
+    throw error;
   }
 }
 
@@ -63,24 +64,44 @@ app.get('/', async (req, res) => {
       }
     });
 
-    const dadosCriptografados = response.data;
+    const rawData = response.data.trim();
+    let decryptedData = null;
+    let success = false;
 
-    // 2. Remoção exata do prefixo "SHOK" do aplicativo
-    const prefixo = "SHOK5119ocG2i+z/";
-    let base64Correto = dadosCriptografados;
-
-    if (dadosCriptografados.startsWith(prefixo)) {
-      base64Correto = dadosCriptografados.substring(prefixo.length);
+    // ESTRATÉGIA MÁGICA:
+    // O código vai procurar onde a string de Base64 realmente começa.
+    // Ele tenta decifrar a partir da primeira barra, da segunda barra, ou do início.
+    const scanIndices = [0];
+    
+    // Procura todas as barras na resposta para tentar começar a partir delas
+    for (let i = 0; i < rawData.length; i++) {
+      if (rawData[i] === '/') {
+        scanIndices.push(i + 1);
+      }
     }
 
-    // 3. Descodificando os dados
-    const dadosFinais = decrypt(base64Correto);
+    // Tenta decifrar cada possibilidade de corte
+    for (const index of scanIndices) {
+      try {
+        const testChunk = rawData.substring(index);
+        decryptedData = decrypt(testChunk);
+        success = true;
+        break; // Se funcionar sem erro, encontramos o ponto exato!
+      } catch (e) {
+        // Se der erro de tamanho de bloco, ignora e tenta o próximo corte
+        continue;
+      }
+    }
+
+    if (!success) {
+      return res.status(500).send("Não foi possível encontrar o bloco AES correto.");
+    }
 
     // Retorna o JSON limpo
     try {
-      res.json(JSON.parse(dadosFinais));
+      res.json(JSON.parse(decryptedData));
     } catch {
-      res.send(dadosFinais);
+      res.send(decryptedData);
     }
 
   } catch (error) {
