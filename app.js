@@ -11,31 +11,26 @@ app.get('/', async (req, res) => {
     params.append('device_id', '5d570494343d7035');
 
     const response = await axios.post('https://filmbr.i2s1n.com/api/public/get_sys_conf', 
-    params, 
+    params.toString(), // Convertemos explicitamente para string
     {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'User-Agent': 'Dalvik/2.1.0 (Linux; U; Android 9; NE2211 Build/SKQ1.220617.001)',
         'Host': 'filmbr.i2s1n.com',
         'Connection': 'Keep-Alive',
-        'Accept-Encoding': 'gzip' // Adicionado para simular o app real
+        'Accept': '*/*',
+        'Accept-Encoding': 'gzip, deflate',
+        'Cache-Control': 'no-cache'
       }
     });
 
-    // Retorna tudo o que a API deles mandou para analisarmos
-    res.json({
-      status: response.status,
-      headers: response.headers,
-      data: response.data
-    });
-
+    // Mostra apenas os dados reais da API na tela
+    res.json(response.data);
   } catch (error) {
     if (error.response) {
-      // Se a API deles respondeu com erro (ex: 403, 400)
       res.json({
-        erro: "A API deles recusou",
+        erro: "A API recusou",
         status: error.response.status,
-        headers: error.response.headers,
         data: error.response.data
       });
     } else {
