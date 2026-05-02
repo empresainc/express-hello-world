@@ -1,5 +1,6 @@
 const express = require('express');
 const axios = require('axios');
+const zlib = require('zlib'); // Biblioteca padrão do Node para descompressão
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -13,8 +14,9 @@ app.get('/', async (req, res) => {
     const response = await axios.post('https://filmbr.i2s1n.com/api/search/screen', 
     params.toString(), 
     {
+      responseType: 'arraybuffer', // Força o Axios a receber os dados binários puros
       headers: {
-        'Accept-Encoding': 'gzip',
+        'Accept-Encoding': 'gzip, deflate',
         'androidid': '5d570494343d7035',
         'app_id': 'filmbr',
         'app_language': 'pt',
@@ -39,14 +41,20 @@ app.get('/', async (req, res) => {
       }
     });
 
-    const dadosCriptografados = response.data;
-
-    // Tentativa 1: Descodificar de Base64 para texto normal
-    const textoDescodificado = Buffer.from(dadosCriptografados, 'base64').toString('utf-8');
-
-    res.json({
-      original_criptografado: dadosCriptografados.substring(0, 50) + "...", // Apenas um pedaço para confirmar
-      resultado_descodificado: textoDescodificado
+    // Tenta descomprimir com Gzip
+    zlib.gunzip(response.data, (err, dezipped) => {
+      if (!err) {
+        // Se funcionar como Gzip, mostra o texto legível
+        return res.send(dezipped.toString('utf-8'));
+      } else {
+        // Se não for Gzip, tenta ler como texto direto para ver se é AES
+        const textoOriginal = Buffer.from(response.data).toString('utf-8');
+        return res.json({
+          aviso: "Não era Gzip. O conteúdo parece estar encriptado com AES.",
+          tamanho_dados: response.data.length,
+          exemplo_dados: textoOriginal.substring(0, 100)
+        });
+      }
     });
 
   } catch (error) {
