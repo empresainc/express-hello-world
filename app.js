@@ -5,7 +5,6 @@ const port = process.env.PORT || 3000;
 
 app.get('/', async (req, res) => {
   try {
-    // Usamos URLSearchParams para formatar os dados corretamente
     const params = new URLSearchParams();
     params.append('app_id', 'filmbr');
     params.append('version', '1.0.0');
@@ -18,14 +17,30 @@ app.get('/', async (req, res) => {
         'Content-Type': 'application/x-www-form-urlencoded',
         'User-Agent': 'Dalvik/2.1.0 (Linux; U; Android 9; NE2211 Build/SKQ1.220617.001)',
         'Host': 'filmbr.i2s1n.com',
-        'Connection': 'Keep-Alive'
+        'Connection': 'Keep-Alive',
+        'Accept-Encoding': 'gzip' // Adicionado para simular o app real
       }
     });
 
-    // Envia o JSON de volta para o seu navegador
-    res.json(response.data);
+    // Retorna tudo o que a API deles mandou para analisarmos
+    res.json({
+      status: response.status,
+      headers: response.headers,
+      data: response.data
+    });
+
   } catch (error) {
-    res.status(500).send("Erro ao conectar à API deles: " + error.message);
+    if (error.response) {
+      // Se a API deles respondeu com erro (ex: 403, 400)
+      res.json({
+        erro: "A API deles recusou",
+        status: error.response.status,
+        headers: error.response.headers,
+        data: error.response.data
+      });
+    } else {
+      res.status(500).send("Erro de conexão: " + error.message);
+    }
   }
 });
 
