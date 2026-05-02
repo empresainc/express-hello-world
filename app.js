@@ -5,7 +5,6 @@ const port = process.env.PORT || 3000;
 
 app.get('/', async (req, res) => {
   try {
-    // Corpo da requisição exatamente igual ao que o app envia
     const params = new URLSearchParams();
     params.append('app_id', 'filmbr');
     params.append('version', '1.0.0');
@@ -40,18 +39,18 @@ app.get('/', async (req, res) => {
       }
     });
 
-    // Envia o JSON real de volta
-    res.json(response.data);
+    const dadosCriptografados = response.data;
+
+    // Tentativa 1: Descodificar de Base64 para texto normal
+    const textoDescodificado = Buffer.from(dadosCriptografados, 'base64').toString('utf-8');
+
+    res.json({
+      original_criptografado: dadosCriptografados.substring(0, 50) + "...", // Apenas um pedaço para confirmar
+      resultado_descodificado: textoDescodificado
+    });
+
   } catch (error) {
-    if (error.response) {
-      res.json({
-        erro: "A API recusou",
-        status: error.response.status,
-        data: error.response.data
-      });
-    } else {
-      res.status(500).send("Erro de conexão: " + error.message);
-    }
+    res.status(500).send("Erro: " + error.message);
   }
 });
 
