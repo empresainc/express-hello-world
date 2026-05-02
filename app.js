@@ -4,21 +4,23 @@ const crypto = require('crypto');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Configurações exatas que descobrimos no código do app
+// Configurações exatas extraídas do seu JADX
 const AES_KEY = "QwEr12TyUi!@Op34AsDf#$GhJk56L%^Z";
 const AES_IV  = "xCvB78Nm&*9(0)Mn";
 
-// Função para descriptografar os dados da API
 function decrypt(cipherText) {
   try {
-    // A chave AES-256 precisa ter exatamente 32 bytes
+    // A chave e o IV exatos que você encontrou no Constant.java
     const key = Buffer.from(AES_KEY, 'utf8');
     const iv = Buffer.from(AES_IV, 'utf8');
+
+    // Remove espaços em branco ou quebras de linha que possam quebrar o Base64
+    const cleanedCipherText = cipherText.replace(/\s/g, '');
 
     const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
     decipher.setAutoPadding(true);
 
-    let decrypted = decipher.update(cipherText, 'base64', 'utf8');
+    let decrypted = decipher.update(cleanedCipherText, 'base64', 'utf8');
     decrypted += decipher.final('utf8');
     return decrypted;
   } catch (error) {
@@ -63,24 +65,30 @@ app.get('/', async (req, res) => {
     });
 
     const dadosCriptografados = response.data;
-    
-    // Removendo o cabeçalho 'SHOK5119ocG2i+z/' se ele vier na resposta
-    const base64Limpo = dadosCriptografados.includes('/') 
-      ? dadosCriptografados.substring(dadosCriptografados.indexOf('/') + 1)
-      : dadosCriptografados;
 
-    // Descriptografando os dados
-    const dadosFinais = decrypt(base64Limpo);
+    // Tratamento dinâmico para pegar exatamente os dados após o "SHOKxxxxxx/"
+    let base64Correto = dadosCriptografados;
+    if (dadosCriptografados.startsWith("SHOK")) {
+      const parts = dadosCriptografados.split('/');
+      if (parts.length > 1) {
+        // Remove a primeira parte (SHOK5119ocG2i+z) e junta o resto caso haja mais barras
+        parts.shift(); 
+        base64Correto = parts.join('/');
+      }
+    }
 
-    // Envia o JSON dos filmes limpo para a tela
+    // Descriptografando os dados limpos
+    const dadosFinais = decrypt(base64Correto);
+
+    // Tenta exibir como JSON, senão exibe como texto direto
     try {
       res.json(JSON.parse(dadosFinais));
     } catch {
-      res.send(dadosFinais); // Se não for um JSON válido, manda como texto
+      res.send(dadosFinais);
     }
 
   } catch (error) {
-    res.status(500).send("Erro: " + error.message);
+    res.status(500).send("Erro na requisição: " + error.message);
   }
 });
 
