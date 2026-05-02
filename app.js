@@ -10,12 +10,11 @@ const AES_IV  = "xCvB78Nm&*9(0)Mn";
 
 function decrypt(cipherText) {
   try {
-    // A chave e o IV exatos que você encontrou no Constant.java
     const key = Buffer.from(AES_KEY, 'utf8');
     const iv = Buffer.from(AES_IV, 'utf8');
 
-    // Remove espaços em branco ou quebras de linha que possam quebrar o Base64
-    const cleanedCipherText = cipherText.replace(/\s/g, '');
+    // 1. Limpeza total: Remove TUDO o que não for caractere de Base64 válido (A-Z, a-z, 0-9, +, /, =)
+    const cleanedCipherText = cipherText.replace(/[^A-Za-z0-9+/=]/g, '');
 
     const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
     decipher.setAutoPadding(true);
@@ -66,21 +65,20 @@ app.get('/', async (req, res) => {
 
     const dadosCriptografados = response.data;
 
-    // Tratamento dinâmico para pegar exatamente os dados após o "SHOKxxxxxx/"
+    // 2. Se a resposta começar com o cabeçalho "SHOK...", removemos apenas essa parte inicial.
     let base64Correto = dadosCriptografados;
     if (dadosCriptografados.startsWith("SHOK")) {
       const parts = dadosCriptografados.split('/');
       if (parts.length > 1) {
-        // Remove a primeira parte (SHOK5119ocG2i+z) e junta o resto caso haja mais barras
-        parts.shift(); 
-        base64Correto = parts.join('/');
+        parts.shift(); // Remove a parte do "SHOK5119ocG2i+z"
+        base64Correto = parts.join('/'); // Junta o resto mantendo os dados intactos
       }
     }
 
-    // Descriptografando os dados limpos
+    // 3. Descriptografando os dados
     const dadosFinais = decrypt(base64Correto);
 
-    // Tenta exibir como JSON, senão exibe como texto direto
+    // Retorna o JSON original ou texto
     try {
       res.json(JSON.parse(dadosFinais));
     } catch {
