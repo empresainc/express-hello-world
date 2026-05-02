@@ -4,27 +4,44 @@ const crypto = require('crypto');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Credenciais exatas extraídas do seu JADX
+// Configurações exatas extraídas do seu JADX
 const AES_KEY = "QwEr12TyUi!@Op34AsDf#$GhJk56L%^Z";
 const AES_IV  = "xCvB78Nm&*9(0)Mn";
 
-function decrypt(cipherText) {
+// Função que tenta descriptografar de todas as formas possíveis
+function decryptAllVariants(cipherText) {
+  // Limpeza absoluta de caracteres inválidos do Base64
+  const cleaned = cipherText.replace(/[^A-Za-z0-9+/=]/g, '');
+  const iv = Buffer.from(AES_IV, 'utf8');
+
+  // Variável para guardar o resultado se funcionar
+  let decryptedResult = null;
+
+  // Variante 1: AES-256-CBC usando a chave completa (32 bytes)
   try {
-    const key = Buffer.from(AES_KEY, 'utf8');
-    const iv = Buffer.from(AES_IV, 'utf8');
-
-    // Limpeza rigorosa: remove qualquer caractere que não pertença ao Base64
-    const cleaned = cipherText.replace(/[^A-Za-z0-9+/=]/g, '');
-
-    const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
-    decipher.setAutoPadding(true);
-
-    let decrypted = decipher.update(cleaned, 'base64', 'utf8');
-    decrypted += decipher.final('utf8');
+    const key256 = Buffer.from(AES_KEY, 'utf8');
+    const decipher256 = crypto.createDecipheriv('aes-256-cbc', key256, iv);
+    decipher256.setAutoPadding(true);
+    let decrypted = decipher256.update(cleaned, 'base64', 'utf8');
+    decrypted += decipher256.final('utf8');
     return decrypted;
-  } catch (error) {
-    throw error;
+  } catch (e) {
+    // Falhou com AES-256, vamos tentar a Variante 2
   }
+
+  // Variante 2: AES-128-CBC usando apenas os primeiros 16 bytes da chave
+  try {
+    const key128 = Buffer.from(AES_KEY.substring(0, 16), 'utf8');
+    const decipher128 = crypto.createDecipheriv('aes-128-cbc', key128, iv);
+    decipher128.setAutoPadding(true);
+    let decrypted = decipher128.update(cleaned, 'base64', 'utf8');
+    decrypted += decipher128.final('utf8');
+    return decrypted;
+  } catch (e) {
+    // Falhou também com AES-128
+  }
+
+  throw new Error("Falhou em todas as variantes de AES (128 e 256 bits).");
 }
 
 app.get('/', async (req, res) => {
@@ -37,9 +54,9 @@ app.get('/', async (req, res) => {
     const response = await axios.post('https://filmbr.i2s1n.com/api/search/screen', 
     params.toString(), 
     {
-      responseType: 'text', // Força o Axios a não tentar interpretar os dados como JSON
+      responseType: 'text',
       headers: {
-        'Accept-Encoding': 'identity', // Desativa compressão gzip para os dados virem limpos
+        'Accept-Encoding': 'identity',
         'androidid': '5d570494343d7035',
         'app_id': 'filmbr',
         'app_language': 'pt',
@@ -66,25 +83,24 @@ app.get('/', async (req, res) => {
 
     const rawData = response.data.toString().trim();
     
-    // Remove o cabeçalho 'SHOK...' caso ele venha na resposta
+    // Corta a string após a primeira barra '/' para isolar o Base64
     let base64Limpo = rawData;
     if (rawData.includes('/')) {
       base64Limpo = rawData.substring(rawData.indexOf('/') + 1);
     }
 
-    // Tenta decifrar
     try {
-      const dadosFinais = decrypt(base64Limpo);
+      // Tenta descriptografar usando as variantes
+      const dadosFinais = decryptAllVariants(base64Limpo);
       
-      // Retorna o JSON limpo
+      // Retorna o JSON original ou texto
       try {
         res.json(JSON.parse(dadosFinais));
       } catch {
         res.send(dadosFinais);
       }
-    } catch (decryptError) {
-      // Se ainda assim falhar, o código mostra a resposta exata recebida para depuração
-      res.status(500).send("Erro na descriptografia: " + decryptError.message + "\n\nDados recebidos:\n" + rawData);
+    } catch (error) {
+      res.status(500).send("Erro na descriptografia: " + error.message + "\n\nDados Base64 tentados:\n" + base64Limpo);
     }
 
   } catch (error) {
