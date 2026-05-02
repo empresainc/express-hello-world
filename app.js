@@ -1,31 +1,7 @@
 const express = require('express');
 const axios = require('axios');
-const crypto = require('crypto');
 const app = express();
 const port = process.env.PORT || 3000;
-
-// Configurações exatas extraídas do seu JADX
-const AES_KEY = "QwEr12TyUi!@Op34AsDf#$GhJk56L%^Z";
-const AES_IV  = "xCvB78Nm&*9(0)Mn";
-
-function decrypt(cipherText) {
-  try {
-    const key = Buffer.from(AES_KEY, 'utf8');
-    const iv = Buffer.from(AES_IV, 'utf8');
-
-    // 1. Limpeza total: Remove TUDO o que não for caractere de Base64 válido (A-Z, a-z, 0-9, +, /, =)
-    const cleanedCipherText = cipherText.replace(/[^A-Za-z0-9+/=]/g, '');
-
-    const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
-    decipher.setAutoPadding(true);
-
-    let decrypted = decipher.update(cleanedCipherText, 'base64', 'utf8');
-    decrypted += decipher.final('utf8');
-    return decrypted;
-  } catch (error) {
-    return "Erro ao descriptografar: " + error.message;
-  }
-}
 
 app.get('/', async (req, res) => {
   try {
@@ -63,27 +39,9 @@ app.get('/', async (req, res) => {
       }
     });
 
-    const dadosCriptografados = response.data;
-
-    // 2. Se a resposta começar com o cabeçalho "SHOK...", removemos apenas essa parte inicial.
-    let base64Correto = dadosCriptografados;
-    if (dadosCriptografados.startsWith("SHOK")) {
-      const parts = dadosCriptografados.split('/');
-      if (parts.length > 1) {
-        parts.shift(); // Remove a parte do "SHOK5119ocG2i+z"
-        base64Correto = parts.join('/'); // Junta o resto mantendo os dados intactos
-      }
-    }
-
-    // 3. Descriptografando os dados
-    const dadosFinais = decrypt(base64Correto);
-
-    // Retorna o JSON original ou texto
-    try {
-      res.json(JSON.parse(dadosFinais));
-    } catch {
-      res.send(dadosFinais);
-    }
+    // Em vez de descodificar, vamos enviar a resposta EXATA para o ecrã
+    res.setHeader('Content-Type', 'text/plain');
+    res.send(response.data);
 
   } catch (error) {
     res.status(500).send("Erro na requisição: " + error.message);
