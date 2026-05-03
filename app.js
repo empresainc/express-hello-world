@@ -9,29 +9,31 @@ const port = process.env.PORT || 3000;
 const AES_KEY = "QwEr12TyUi!@Op34AsDf#$GhJk56L%^Z";
 const AES_IV  = "xCvB78Nm&*9(0)Mn";
 
-function cleanPayload(data) {
-  let text = data.toString().trim();
+function getPayloadVariants(data) {
+  const raw = data.toString().trim();
 
-  if (text.startsWith('SHOK')) {
-    text = text.slice(4);
+  const variants = [raw];
+
+  if (raw.startsWith('SHOK')) {
+    variants.push(raw.slice(4));
   }
 
-  return text;
+  return variants;
 }
 
-function tryDecodeOutput(buf) {
-  const attempts = [buf];
+function decodeMaybeCompressed(buffer) {
+  const attempts = [buffer];
 
-  try { attempts.push(zlib.gunzipSync(buf)); } catch {}
-  try { attempts.push(zlib.inflateSync(buf)); } catch {}
-  try { attempts.push(zlib.brotliDecompressSync(buf)); } catch {}
+  try { attempts.push(zlib.gunzipSync(buffer)); } catch {}
+  try { attempts.push(zlib.inflateSync(buffer)); } catch {}
+  try { attempts.push(zlib.brotliDecompressSync(buffer)); } catch {}
 
-  for (const out of attempts) {
-    const text = out.toString('utf8');
+  for (const buf of attempts) {
+    const text = buf.toString('utf8');
 
     if (
-      text.startsWith('{') ||
-      text.startsWith('[') ||
+      text.includes('{') ||
+      text.includes('[') ||
       text.includes('"code"') ||
       text.includes('"data"') ||
       text.includes('"msg"')
@@ -43,98 +45,84 @@ function tryDecodeOutput(buf) {
   return null;
 }
 
-function decryptAES(base64) {
-  const data = Buffer.from(base64, 'base64');
+function decryptAES(rawText) {
+  const payloads = getPayloadVariants(rawText);
+
+  const key256 = Buffer.from(AES_KEY, 'utf8');
+  const key128 = Buffer.from(AES_KEY.slice(0, 16), 'utf8');
+  const iv = Buffer.from(AES_IV, 'utf8');
 
   const keys = [
-    {
-      name: 'key direta 32 bytes',
-      value: Buffer.from(AES_KEY, 'utf8')
-    },
-    {
-      name: 'primeiros 16 bytes',
-      value: Buffer.from(AES_KEY.slice(0, 16), 'utf8')
-    },
-    {
-      name: 'MD5 key',
-      value: crypto.createHash('md5').update(AES_KEY).digest()
-    },
-    {
-      name: 'SHA256 key',
-      value: crypto.createHash('sha256').update(AES_KEY).digest()
-    }
-  ];
-
-  const ivs = [
-    {
-      name: 'iv direta',
-      value: Buffer.from(AES_IV, 'utf8')
-    },
-    {
-      name: 'iv zeros',
-      value: Buffer.alloc(16, 0)
-    },
-    {
-      name: 'iv primeiros 16 bytes do payload',
-      value: data.slice(0, 16),
-      strip: true
-    }
+    { name: 'key256 direta', value: key256 },
+    { name: 'key128 primeiros 16', value: key128 },
+    { name: 'MD5 key', value: crypto.createHash('md5').update(AES_KEY).digest() },
+    { name: 'SHA256 key', value: crypto.createHash('sha256').update(AES_KEY).digest() }
   ];
 
   const modes = [
     'aes-256-cbc',
     'aes-128-cbc',
     'aes-256-ecb',
-    'aes-128-ecb'
+    'aes-128-ecb',
+    'aes-256-cfb',
+    'aes-128-cfb',
+    'aes-256-ofb',
+    'aes-128-ofb',
+    'aes-256-ctr',
+    'aes-128-ctr'
   ];
 
-  for (const mode of modes) {
-    for (const keyObj of keys) {
-      const key = keyObj.value;
+  for (const payload of payloads) {
+    const input = Buffer.from(payload, 'base64');
 
-      if (mode.includes('256') && key.length !== 32) continue;
-      if (mode.includes('128') && key.length !== 16) continue;
+    for (const mode of modes) {
+      for (const keyObj of keys) {
+        const key = keyObj.value;
 
-      const possibleIvs = mode.includes('ecb')
-        ? [{ name: 'sem IV', value: null }]
-        : ivs;
+        if (mode.includes('256') && key.length !== 32) continue;
+        if (mode.includes('128') && key.length !== 16) continue;
 
-      for (const ivObj of possibleIvs) {
-        for (const autoPadding of [true, false]) {
-          try {
-            let input = data;
+        const ivs = mode.includes('ecb')
+          ? [{ name: 'sem IV', value: null, strip: false }]
+          : [
+              { name: 'AES_IV', value: iv, strip: false },
+              { name: 'zeros', value: Buffer.alloc(16, 0), strip: false },
+              { name: 'primeiros 16 do payload', value: input.slice(0, 16), strip: true }
+            ];
 
-            if (ivObj.strip) {
-              input = data.slice(16);
-            }
+        for (const ivObj of ivs) {
+          for (const padding of [true, false]) {
+            try {
+              const finalInput = ivObj.strip ? input.slice(16) : input;
 
-            const decipher = crypto.createDecipheriv(
-              mode,
-              key,
-              ivObj.value
-            );
-
-            decipher.setAutoPadding(autoPadding);
-
-            const decrypted = Buffer.concat([
-              decipher.update(input),
-              decipher.final()
-            ]);
-
-            const decoded = tryDecodeOutput(decrypted);
-
-            if (decoded) {
-              console.log("✅ AES FUNCIONOU:", {
+              const decipher = crypto.createDecipheriv(
                 mode,
-                key: keyObj.name,
-                iv: ivObj.name,
-                autoPadding
-              });
+                key,
+                ivObj.value
+              );
 
-              return decoded;
-            }
+              decipher.setAutoPadding(padding);
 
-          } catch (e) {}
+              const decrypted = Buffer.concat([
+                decipher.update(finalInput),
+                decipher.final()
+              ]);
+
+              const decoded = decodeMaybeCompressed(decrypted);
+
+              if (decoded) {
+                console.log('✅ FUNCIONOU:', {
+                  payloadCortadoSHOK: payload !== rawText,
+                  mode,
+                  key: keyObj.name,
+                  iv: ivObj.name,
+                  padding
+                });
+
+                return decoded;
+              }
+            } catch {}
+          }
         }
       }
     }
@@ -183,19 +171,10 @@ app.get('/', async (req, res) => {
 
     const raw = response.data.toString().trim();
 
-    console.log("RAW INÍCIO:", raw.slice(0, 50));
-    console.log("RAW TAMANHO:", raw.length);
+    console.log('RAW início:', raw.slice(0, 80));
+    console.log('RAW tamanho:', raw.length);
 
-    if (!raw.startsWith('SHOK')) {
-      return res.send({
-        erro: true,
-        tipo: 'API_ERRO_OU_RESPOSTA_INVALIDA',
-        data: raw
-      });
-    }
-
-    const payload = cleanPayload(raw);
-    const decrypted = decryptAES(payload);
+    const decrypted = decryptAES(raw);
 
     try {
       return res.json(JSON.parse(decrypted));
@@ -204,7 +183,7 @@ app.get('/', async (req, res) => {
     }
 
   } catch (error) {
-    return res.status(500).send({
+    return res.status(500).json({
       erro: true,
       mensagem: error.message
     });
