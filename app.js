@@ -1,7 +1,6 @@
 const express = require("express");
 const axios = require("axios");
 const crypto = require("crypto");
-const zlib = require("zlib");
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -9,116 +8,29 @@ const port = process.env.PORT || 3000;
 const AES_KEY = "QwEr12TyUi!@Op34AsDf#$GhJk56L%^Z";
 const AES_IV = "xCvB78Nm&*9(0)Mn";
 
-function payloadVariants(raw) {
-  raw = raw.toString().trim();
-
-  const arr = [raw];
-
-  if (raw.startsWith("SHOK")) {
-    arr.push(raw.slice(4));
-  }
-
-  return arr;
-}
-
-function tryUnzip(buffer) {
-  const list = [buffer];
-
-  try { list.push(zlib.gunzipSync(buffer)); } catch {}
-  try { list.push(zlib.inflateSync(buffer)); } catch {}
-  try { list.push(zlib.inflateRawSync(buffer)); } catch {}
-  try { list.push(zlib.brotliDecompressSync(buffer)); } catch {}
-
-  return list;
-}
-
-function isJson(text) {
-  try {
-    JSON.parse(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function decryptAES(raw) {
-  const variants = payloadVariants(raw);
+  const variants = [
+    raw.trim(),
+    raw.trim().startsWith("SHOK") ? raw.trim().slice(4) : raw.trim(),
+    raw.trim().startsWith("SHOK") ? raw.trim().slice(8) : raw.trim()
+  ];
 
-  const key256 = Buffer.from(AES_KEY, "utf8");
-  const key128 = Buffer.from(AES_KEY.slice(0, 16), "utf8");
+  const key = Buffer.from(AES_KEY, "utf8");
   const iv = Buffer.from(AES_IV, "utf8");
 
-  const keys = [
-    { name: "key256 direta", value: key256 },
-    { name: "key128 primeiros16", value: key128 },
-    { name: "md5", value: crypto.createHash("md5").update(AES_KEY).digest() },
-    { name: "sha256", value: crypto.createHash("sha256").update(AES_KEY).digest() }
-  ];
+  for (const data of variants) {
+    try {
+      const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+      decipher.setAutoPadding(true);
 
-  const modes = [
-    "aes-256-cbc",
-    "aes-128-cbc",
-    "aes-256-ecb",
-    "aes-128-ecb",
-    "aes-256-cfb",
-    "aes-128-cfb",
-    "aes-256-ofb",
-    "aes-128-ofb",
-    "aes-256-ctr",
-    "aes-128-ctr"
-  ];
+      let decrypted = decipher.update(data, "base64", "utf8");
+      decrypted += decipher.final("utf8");
 
-  for (const payload of variants) {
-    const encrypted = Buffer.from(payload, "base64");
-
-    for (const mode of modes) {
-      for (const keyObj of keys) {
-        const key = keyObj.value;
-
-        if (mode.includes("256") && key.length !== 32) continue;
-        if (mode.includes("128") && key.length !== 16) continue;
-
-        const ivs = mode.includes("ecb")
-          ? [{ name: "sem_iv", value: null, strip: false }]
-          : [
-              { name: "AES_IV", value: iv, strip: false },
-              { name: "zero_iv", value: Buffer.alloc(16, 0), strip: false },
-              { name: "iv_payload", value: encrypted.slice(0, 16), strip: true }
-            ];
-
-        for (const ivObj of ivs) {
-          for (const padding of [true, false]) {
-            try {
-              const input = ivObj.strip ? encrypted.slice(16) : encrypted;
-
-              const decipher = crypto.createDecipheriv(mode, key, ivObj.value);
-              decipher.setAutoPadding(padding);
-
-              const decrypted = Buffer.concat([
-                decipher.update(input),
-                decipher.final()
-              ]);
-
-              for (const out of tryUnzip(decrypted)) {
-                const text = out.toString("utf8").trim();
-
-                if (isJson(text)) {
-                  return {
-                    type: "json",
-                    method: { mode, key: keyObj.name, iv: ivObj.name, padding },
-                    data: JSON.parse(text)
-                  };
-                }
-              }
-
-            } catch {}
-          }
-        }
-      }
-    }
+      return decrypted;
+    } catch (e) {}
   }
 
-  return null;
+  throw new Error("Falhou no AES. Provavelmente o prefixo não é SHOK/SHOK5119 ou este endpoint usa outro decrypt.");
 }
 
 app.get("/", async (req, res) => {
@@ -160,26 +72,16 @@ app.get("/", async (req, res) => {
     );
 
     const raw = response.data.toString().trim();
+    const decrypted = decryptAES(raw);
 
-    const result = decryptAES(raw);
-
-    if (result) {
-      return res.json({
-        sucesso: true,
-        metodo: result.method,
-        data: result.data
-      });
+    try {
+      res.json(JSON.parse(decrypted));
+    } catch {
+      res.send(decrypted);
     }
 
-    return res.json({
-      erro: true,
-      mensagem: "A resposta não virou JSON. Provavelmente é Protobuf/binário ou a chave AES está errada.",
-      raw_inicio: raw.slice(0, 80),
-      raw_tamanho: raw.length
-    });
-
   } catch (error) {
-    return res.status(500).json({
+    res.status(500).json({
       erro: true,
       mensagem: error.message
     });
