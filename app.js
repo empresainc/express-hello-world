@@ -1,6 +1,7 @@
 const express = require("express");
 const axios = require("axios");
 const crypto = require("crypto");
+const zlib = require("zlib");
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -8,29 +9,55 @@ const port = process.env.PORT || 3000;
 const AES_KEY = "QwEr12TyUi!@Op34AsDf#$GhJk56L%^Z";
 const AES_IV = "xCvB78Nm&*9(0)Mn";
 
-function decryptAES(raw) {
-  const variants = [
-    raw.trim(),
-    raw.trim().startsWith("SHOK") ? raw.trim().slice(4) : raw.trim(),
-    raw.trim().startsWith("SHOK") ? raw.trim().slice(8) : raw.trim()
-  ];
+function decodeOutput(buffer) {
+  const tries = [buffer];
 
+  try { tries.push(zlib.gunzipSync(buffer)); } catch {}
+  try { tries.push(zlib.inflateSync(buffer)); } catch {}
+  try { tries.push(zlib.inflateRawSync(buffer)); } catch {}
+
+  for (const b of tries) {
+    const txt = b.toString("utf8").trim();
+    if (txt.startsWith("{") || txt.startsWith("[")) return txt;
+  }
+
+  return null;
+}
+
+function decryptAES(raw) {
+  const text = raw.trim();
   const key = Buffer.from(AES_KEY, "utf8");
   const iv = Buffer.from(AES_IV, "utf8");
 
-  for (const data of variants) {
+  for (let offset = 0; offset <= 80; offset++) {
+    let payload = text.slice(offset).trim();
+
+    if (!/^[A-Za-z0-9+/=]+$/.test(payload)) continue;
+    if (payload.length % 4 !== 0) continue;
+
+    const encrypted = Buffer.from(payload, "base64");
+
+    if (encrypted.length % 16 !== 0) continue;
+
     try {
       const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
       decipher.setAutoPadding(true);
 
-      let decrypted = decipher.update(data, "base64", "utf8");
-      decrypted += decipher.final("utf8");
+      const decrypted = Buffer.concat([
+        decipher.update(encrypted),
+        decipher.final()
+      ]);
 
-      return decrypted;
-    } catch (e) {}
+      const decoded = decodeOutput(decrypted);
+
+      if (decoded) {
+        console.log("FUNCIONOU COM OFFSET:", offset);
+        return decoded;
+      }
+    } catch {}
   }
 
-  throw new Error("Falhou no AES. Provavelmente o prefixo não é SHOK/SHOK5119 ou este endpoint usa outro decrypt.");
+  throw new Error("AES falhou. Precisa descobrir o offset/header real ou outro decrypt.");
 }
 
 app.get("/", async (req, res) => {
@@ -74,14 +101,10 @@ app.get("/", async (req, res) => {
     const raw = response.data.toString().trim();
     const decrypted = decryptAES(raw);
 
-    try {
-      res.json(JSON.parse(decrypted));
-    } catch {
-      res.send(decrypted);
-    }
+    return res.json(JSON.parse(decrypted));
 
   } catch (error) {
-    res.status(500).json({
+    return res.status(500).json({
       erro: true,
       mensagem: error.message
     });
